@@ -133,7 +133,6 @@ func (p *amplitudePlugin) Execute(event *types.Event) {
 		event: event,
 		wg:    nil,
 	}:
-	default:
 	}
 }
 
