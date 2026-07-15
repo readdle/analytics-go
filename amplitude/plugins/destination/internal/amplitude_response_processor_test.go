@@ -3,6 +3,7 @@ package internal_test
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -92,6 +93,37 @@ func (t *AmplitudeResponseProcessorSuite) TestTimeout() {
 	require.Equal(2, len(result.EventsForRetry))
 
 	for i, originalEvent := range []types.Event{originalEvents[0], originalEvents[2]} {
+		event := *result.EventsForRetry[i]
+		require.Equal(originalEvent, *event.Event)
+		require.Equal(1, event.RetryCount)
+		require.Equal(now.Add(retryBaseInterval), event.RetryAt)
+	}
+}
+
+func (t *AmplitudeResponseProcessorSuite) TestTransportError_Retried() {
+	events := t.cloneOriginalEvents()
+
+	now := time.Now()
+	retryBaseInterval := time.Second * 3
+
+	p := internal.NewAmplitudeResponseProcessor(internal.AmplitudeResponseProcessorOptions{
+		MaxRetries:        2,
+		RetryBaseInterval: retryBaseInterval,
+		Now:               func() time.Time { return now },
+		Logger:            loggers.NewDefaultLogger(),
+	})
+
+	// Connection reset: http.Client.Do returns a non-timeout *url.Error and no
+	// response, so Status stays 0.
+	result := p.Process(events, internal.AmplitudeResponse{
+		Err: connectionResetError(),
+	})
+
+	require := t.Require()
+	require.Empty(result.EventsForCallback)
+	require.Equal(len(originalEvents), len(result.EventsForRetry))
+
+	for i, originalEvent := range originalEvents {
 		event := *result.EventsForRetry[i]
 		require.Equal(originalEvent, *event.Event)
 		require.Equal(1, event.RetryCount)
@@ -331,6 +363,16 @@ func (t *AmplitudeResponseProcessorSuite) TestProcessUnknownError_ResponseError(
 	}
 
 	require.Equal(0, len(result.EventsForRetry))
+}
+
+// connectionResetError mimics what http.Client.Do returns when the connection
+// is reset by peer: a *url.Error whose wrapped error does not report a timeout.
+func connectionResetError() error {
+	return &url.Error{
+		Op:  "Post",
+		URL: "https://api2.amplitude.com/2/httpapi",
+		Err: errors.New("read: connection reset by peer"),
+	}
 }
 
 func (t *AmplitudeResponseProcessorSuite) cloneOriginalEvents() []*types.StorageEvent {
