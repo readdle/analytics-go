@@ -54,7 +54,13 @@ func (p *amplitudeResponseProcessor) Process(events []*types.StorageEvent, respo
 	switch {
 	case isSuccess:
 		result = p.processSuccess(events, response)
-	case (isURLErr && urlErr.Timeout()) || responseStatus == http.StatusRequestTimeout || responseStatus == http.StatusInternalServerError:
+	// isURLErr means http.Client.Do failed before producing an HTTP response
+	// (connection reset, EOF, refused, DNS or TLS failure); a server-side HTTP
+	// error returns a response instead and is classified by responseStatus below.
+	// Retry any such request up to MaxRetries rather than dropping the events.
+	// net.Error.Temporary is not used to narrow this: it is deprecated and, for
+	// the "connection reset by peer" read we need to retry, reports false.
+	case isURLErr || responseStatus == http.StatusRequestTimeout || responseStatus == http.StatusInternalServerError:
 		result = p.processTimeout(events, response)
 	case responseStatus == http.StatusRequestEntityTooLarge:
 		result = p.processTooLargeRequest(events, response)
